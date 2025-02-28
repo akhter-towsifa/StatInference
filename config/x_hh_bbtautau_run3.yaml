@@ -1,0 +1,37 @@
+analysis: hh_bbtautau
+type: nonresonant
+model:
+  parameters: [ MX ]
+  param_dependent_bkg: true
+  input_file_pattern: ${ERA}/shape_m${MX}.root
+hist_bins: [ 0, 0.3, 1 ]
+signalFractionForRelevantBins: 0.2
+eras:
+  - Run3_2022
+channels:
+  - tautau
+categories:
+  - inclusive
+processes:
+  - process: data_obs
+    is_data: true
+    is_asimov_data: true
+  - process: GluGlutoHHto2B2Tau_kl_1p00_kt
+    hist_name: GluGlutoHHto2B2Tau_kl_1p00_kt
+    param_values: [125]
+    is_signal: true
+    scale: 2 * 6.272E-02 * 5.824E-01 * 34.13E-03
+  - TT
+  - DY
+uncertainties:
+  - name: lumi_13TeV
+    type: lnN
+    value: 0.014
+autolnNThr: 0.1
+asymlnNThr: 0.001
+ignorelnNThr: 0.001
+autoMCStats:
+  apply: true
+  threshold: 20
+  apply_to_signal: true
+  mode: 1
