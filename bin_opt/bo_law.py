@@ -10,7 +10,7 @@ clean_env = {k: os.environ[k] for k in [
     'HOME', 'USER', 'LOGNAME', 'PATH', 'SHELL', 'ANALYSIS_SOFT_PATH', 'FLAF_CMSSW_BASE'
 ] if k in os.environ}
 
-class ServerTask(HTCondorWorkflow, law.LocalWorkflow):
+class ServerTask(Task, HTCondorWorkflow, law.LocalWorkflow):
     max_runtime = copy_param(HTCondorWorkflow.max_runtime, 48.0)
     def __init__(self, *args, **kwargs):
         super(ServerTask, self).__init__(*args, **kwargs)
@@ -33,7 +33,7 @@ class ServerTask(HTCondorWorkflow, law.LocalWorkflow):
         return law.LocalFileTarget(output_path)
     
     def run(self):
-        print("Test run servertask")
+
         work_directory = os.path.join(os.environ["ANALYSIS_PATH"], "StatInference")
         print("work_directory", work_directory)
 
@@ -42,4 +42,29 @@ class ServerTask(HTCondorWorkflow, law.LocalWorkflow):
         ps_call(
             "bash -c 'source env.sh && cd {} && ".format(work_directory)
              + cmd + "'", 
-             shell=True, env=clean_env)
+             shell=True, env=clean_env
+        )
+
+# class WorkerTask(HTCondorWorkflow, law.LocalWorkflow):
+#     max_runtime = copy_param(HTCondorWorkflow.max_runtime, 48.0)
+#     def __init__(self, *args, **kwargs):
+#         super(WorkerTask, self).__init__(*args, **kwargs)
+#         self.bin_opt_params = yaml.safe_load(open(os.path.join(os.environ["ANALYSIS_PATH"], "StatInference", "bin_opt", "bin_optimization.yaml")))
+        
+#     def requires(self):
+#         return ServerTask.req(self)
+    
+#     def output(self):
+#         return ServerTask.output(self)
+    
+#     def run(self):
+
+#         work_directory = os.path.join(os.environ["ANALYSIS_PATH"], "StatInference")
+
+#         cmd = "python3 bin_opt/submitLimitWorkers.py"
+
+#         ps_call(
+#             "bash -c 'cd {} && ".format(work_directory)
+#             + cmd + "'",
+#             shell=True, env=clean_env
+#         )
