@@ -26,84 +26,73 @@ elif input_binning_opt_config_dict["input"]["num_original_bins"] == 5000:
     max_value_int = input_binning_opt_config_dict["input"]["num_original_bins"]
 
 class MultiBinning:
-    def __init__(self, edges):
-        self.edges = edges
+    def __init__(self, edges_by_category, input_datacards):
+        self.edges_by_category = edges_by_category
         self.exp_limit = None
-        self.input_datacard = None
+        self.input_datacards = input_datacards
     
-
-    @staticmethod
-    def fromEntry(entry):
-        binning = MultiBinning(np.array(entry['bin_edges']))
-        binning.exp_limit = float(entry['exp_limit'])
-        binning.input_datacard = entry['input_datacard']
-        return binning
+    @property
+    def n_categories(self):
+        return len(self.input_datacards)
+    
+    def n_edges_total(self):
+        return sum(len(self.edges_by_category[i]) for i in range(self.n_categories))
     
     def isEquivalent(self, other):
-        if len(self.edges) != len(other.edges):
+        if self.input_datacards != other.input_datacards:
             return False
-        if self.input_datacard != other.input_datacard:
+        if self.n_categories != other.n_categories:
             return False
-        return np.count_nonzero(self.edges == other.edges) == len(self.edges)
-
-    def toPoint(self, n_thrs, n_cards):
-        rel_thrs = self.getRelativeThresholds(n_thrs, n_cards)
-        point = {}
-        for idx in range(n_cards):
-            for n in range(n_thrs):
-                point[f'rel_thr_card{idx}_{n}'] = rel_thrs[idx][n]
-        return point
+        for n in range(self.n_categories):
+            a = self.edges_by_category.get(n, None)
+            b = other.edges_by_category.get(n, None)
+            if a is None or b is None:
+                return False
+            if len(a) != len(b):
+                return False
+            if np.count_nonzero(a == b) != len(a):
+                return False
+        return True
 
     def isBetter(self, other):
         if other is None or other.exp_limit is None:
             return True
         if self.exp_limit != other.exp_limit:
             return self.exp_limit < other.exp_limit
-        return len(self.edges) < len(other.edges)
-        
+        return self.n_edges_total() < other.n_edges_total()
     
-    def getRelativeThresholds(self, n_thrs, n_cards):
-        n_inner_edges = len(self.edges) - 2
-        if n_thrs < n_inner_edges:
-            raise RuntimeError(f"Invalid number of output thresholds: {n_thrs} should not be < {n_inner_edges}")
-        rel_thrs = {}
-        for i in range(n_cards):
-            rel_thrs[i] = (np.random.rand(n_thrs) + min_step) / (1 - min_step)
-            rel_thrs[i][0:n_inner_edges] = np.flip(self.edges[2:] - self.edges[1:-1])
-            if n_inner_edges < n_thrs:
-                rel_thrs[i][n_inner_edges] = max(self.edges[1], rel_thrs[i][n_inner_edges])
-        return rel_thrs
+    def toTask(self, poi, other_datacards=None):
+        if other_datacards is None:
+            other_datacards = []
+        categories = []
+        for idx, card in enumerate(self.input_datacards):
+            categories.append({
+                'cat_id': idx,
+                'datacard': card,
+                'bin_edges': [float(x) for x in self.edges_by_category[idx]]
+            })
+        task = {
+            'task_type': 'multi_category_limit',
+            'poi': poi,
+            'categories': categories,
+            'other_datacards': [os.path.abspath(p) for p in other_datacards]
+        }
+        return task
 
     @staticmethod
-    def fromRelativeThresholds(rel_thrs, bkg_yields):
-        edges = [ max_value_int ]
-        prev_yield = -1
-        for rel_thr in rel_thrs:
-            edge_up = edges[-1]
-            edge_down = max(edge_up - int(round(rel_thr * step_int_scale)), 0)
-            all_ok = False
-            while edge_down >= 0:
-                all_ok, new_yield = bkg_yields.test(edge_down, edge_up, prev_yield)
-                if all_ok: break
-                edge_down -= 1
-            if all_ok:
-                edges.append(edge_down)
-                prev_yield = new_yield
-            if edge_down == 0: break
-        if len(edges) == 1:
-            edges.append(0)
-        edges.reverse()
-        edges = np.array(edges, dtype=float)
-        edges = edges / step_int_scale
-        if edges[-1] != 1:
-            edges[-1] = 1
-        if edges[0] != 0:
-            edges[0] = 0
-        return Binning(edges)
+    def fromResult(result):
+        cats = result['categories']
+        sorted_cats = sorted(cats, key=lambda x: int(x['cat_id']))
+        datacards = [ cat['datacard'] for cat in sorted_cats ]
+        edges_by_category = { int(cat['cat_id']): np.array(cat['bin_edges'], dtype=float) for cat in sorted_cats }
+        binning = MultiBinning(edges_by_category, datacards)
+        binning.exp_limit = float(result['exp_limit'])
+        return binning
 
 class MultiBayesianOptimization:
     def __init__(self, max_n_bins, working_area, workers_dir, acq, kappa, xi,
-                input_datacards_list, poi, bkg_yields_dict, input_queue_size, random_seed=12345):
+                input_datacards_list, poi, bkg_yields_dict, input_queue_size,
+                random_seed=12345, other_datacards=None):
         self.max_n_bins = max_n_bins
         self.binnings = []
         self.best_binning = None
@@ -118,41 +107,43 @@ class MultiBayesianOptimization:
         self.optimizer_lock = threading.Lock()
         self.print_lock = threading.Lock()
         self.bkg_yields_dict = bkg_yields_dict
+        self.other_datacards = other_datacards
 
-        self.input_datacards = {}
+        self.input_datacards = input_datacards_list
         bounds = {}
-        for idx,card in enumerate(input_datacards_list):
-            self.input_datacards[idx] = card
-            for n in range(max_n_bins):
+        for card in range(len(self.input_datacards)):
+            for n in range(self.max_n_bins):
                 upper_bound = 1. if n > 0 else 1.5
-                bounds[f'rel_thr_card{idx}_{n}'] = (min_step, upper_bound) 
+                bounds[f'rel_thr_cat{card}_{n}'] = (min_step, upper_bound) 
 
         self.bounds_transformer = None
         self.optimizer = bayes_opt.BayesianOptimization(f=None, pbounds=bounds, random_state=random_seed, verbose=1)
         self.utilities = [
             bayes_opt.acquisition.UpperConfidenceBound(kappa=kappa),
             bayes_opt.acquisition.ExpectedImprovement(xi=xi),
-            bayes_opt.acquisition.ProportionalIntegralDerivative()
+            bayes_opt.acquisition.ProportionalIntegralDerivative(xi=xi)
         ]
 
-        if not os.path.isdir(working_area):
-            os.makedirs(working_area)
-        if not os.path.isdir(workers_dir):
-            os.makedirs(workers_dir)
+        os.makedirs(working_area, exist_ok=True)
+        os.makedirs(workers_dir, exist_ok=True)
+
         if os.path.isfile(self.log_output):
             with open(self.log_output, 'r') as f:
                 prev_binnins = json.loads('[' + ', '.join(f.readlines()) + ']')
             for entry in prev_binnings:
-                binning = MultiBinning.fromEntry(entry)
+                binning = MultiBinning.fromResult(entry)
                 if self.findEquivalent(binning) is None:
-                    point = binning.toPoint(self.max_n_bins, len(self.input_datacards))
-                    self.register(point, len(binning.edges), binning.exp_limit)
+                    # point = binning.toPoint(self.max_n_bins, len(self.input_datacards))
+                    # self.register(point, len(binning.edges), binning.exp_limit)
                     if binning.isBetter(self.best_binning):
                         self.best_binning = binning
                     self.binnings.append(binning)
+
+                    point = self.bundleToPoint(binning)
+                    self.register(point, binning.n_edges_total(), binning.exp_limit)
         
         if self.best_binning is not None:
-            self.print(f'The best binning from previous iterations: {arrayToStr(self.best_binning.edges)}, exp_limit = {self.best_binning.exp_limit}, datacard = {self.best_binning.input_datacard}')
+            self.print(f'The best limit from previous iterations: exp_limit = {self.best_binning.exp_limit}')
 
         self.bounds_transformer = bayes_opt.SequentialDomainReductionTransformer()
         self.bounds_transformer.initialize(self.optimizer.space)
@@ -164,6 +155,28 @@ class MultiBayesianOptimization:
                 suggestions = json.load(f)
             for edges in suggestions:
                 self.addSuggestion(edges)
+
+    def pointToBundle(self, point):
+
+        edges_by_cat = {}
+        for c in range(len(self.datacards)):
+            rel_thrs = np.zeros(self.max_n_bins, dtype=float)
+            for k in range(self.max_n_bins):
+                rel_thrs[k] = float(point[f"rel_thr_cat{c}_{k}"])
+
+            binning = Binning.fromRelativeThresholds(rel_thrs, self.bkg_yields_dict[c])
+            edges_by_cat[c] = binning.edges
+        return MultiBinning(edges_by_category=edges_by_cat, input_datacards=self.input_datacards)
+
+    def bundleToPoint(self, bundle):
+
+        point = {}
+        for c in range(bundle.n_categories):
+            b = Binning(np.array(bundle.edges_by_category[c], dtype=float))
+            rel_thrs = b.getRelativeThresholds(self.max_n_bins)
+            for k in range(self.max_n_bins):
+                point[f"rel_thr_cat{c}_{k}"] = float(rel_thrs[k])
+        return point
 
     def findEquivalent(self, binning, lock=True):
         equivalent_binning = None
@@ -177,11 +190,11 @@ class MultiBayesianOptimization:
             self.binning_lock.release()
         return equivalent_binning
     
-    def register(self, point, n_edges, exp_limit):
-        loss = -(exp_limit*1e6 + n_edges)
+    def register(self, point, n_edges_total, exp_limit):
+        loss = -(exp_limit*1e6 + n_edges_total)
         self.optimizer_lock.acquire()
         self.optimizer.register(params=point, target=loss)
-        self.updateBounds(n_edges - 2)
+        self.updateBounds(n_edges_total - 2)
         self.optimizer_lock.release()
     
     def print(self, msg):
@@ -190,27 +203,31 @@ class MultiBayesianOptimization:
         self.print_lock.release()
 
     def updateBounds(self, n_points):
-        if self.bound_transformer:
+        if self.bounds_transformer:
             new_bounds = self.bounds_transformer.transform(self.optimizer.space)
             prev_fixed = True
-            for cat_i in range(len(self.input_datacards)):
-                for n in range(self.max_n_bins):
-                    key = f'rel_thr_card{cat_i}_{n}'
-                    if prev_fixed:
-                        prev_fixed = new_bounds[key][1] - new_bounds[key][0] < 0.1 and n < n_points
-                    else:
-                        new_bounds[key] = np.array([min_step, 1.])
-            for key in new_bounds:
-                if new_bounds[key][0] >= new_bounds[key][1]:
-                    new_bounds[key] = np.array([new_bounds[key][1], new_bounds[key][0]])
-                if new_bounds[key][0] < min_step:
-                    new_bounds[key][0] = min_step
-                
-                upper_bound = 1. if key != f'rel_thr_card{cat_i}_0' else 1.5
-                if new_bounds[key][1] > upper_bound:
-                    new_bounds[key][1] = upper_bound
-                if np.any(np.isnan(new_bounds[key])):
-                    new_bounds[key] = np.array([min_step, upper_bound])
+            # for cat_i in range(len(self.input_datacards)):
+            #     for n in range(self.max_n_bins):
+            #         key = f'rel_thr_cat{cat_i}_{n}'
+            #         if prev_fixed:
+            #             prev_fixed = new_bounds[key][1] - new_bounds[key][0] < 0.1 and n < n_points
+            #         else:
+            #             new_bounds[key] = np.array([min_step, 1.])
+            for key, bounds in new_bounds.items():
+                lo, hi = float(bounds[0]), float(bounds[1])
+                if math.isnan(lo) or math.isnan(hi):
+                    # restore default
+                    upper = 1.5 if key.endswith("_0") else 1.0
+                    new_bounds[key] = np.array([min_step, upper])
+                    continue
+                if lo >= hi:
+                    lo, hi = hi, lo
+                lo = max(lo, min_step)
+                upper = 1.5 if key.endswith("_0") else 1.0
+                hi = min(hi, upper)
+                if lo >= hi:
+                    lo, hi = min_step, upper
+                new_bounds[key] = np.array([lo, hi])
             self.optimizer.set_bounds(new_bounds)
     
     def suggest(self, utility_index):
@@ -232,15 +249,12 @@ class MultiBayesianOptimization:
             point = binning.toPoint(self.max_n_bins, len(self.input_datacards))
             self.suggestions.append(point)
 
-###check below for compatibility with multi category optimization
-
     def addNewBinning(self, binning):
         self.binning_lock.acquire()
         if binning.isBetter(self.best_binning):
             self.best_binning = binning
             self.best_binning_split = False
-            self.print('New best binning: {}, exp_limit = {}' \
-                       .format(arrayToStr(binning.edges), binning.exp_limit))
+            self.print(f'New best exp_limit = {binning.exp_limit}, n_edges_total = {binning.n_edges_total()}')
         self.binnings.append(binning)
         self.binning_lock.release()
 
@@ -308,35 +322,36 @@ class MultiBayesianOptimization:
         open_request_sleep = 1
         while n < n_eq_steps:
             point = self.suggest(utility_index)
+            bundle = self.pointToBundle(point)
 
-            rel_thrs = np.zeros(len(point))
-            for idx in range(len(self.input_datacards)):
-                for k in range(self.max_n_bins):
-                    rel_thrs[k] = point[f'rel_thr_card{idx}_{k}']
-                self.print(f'rel_thrs: {arrayToStr(rel_thrs)}')
+            msg = []
+            for c in range(bundle.n_categories):
+                msg.append(f"cat{c}_edges={arrayToStr(bundle.edges_by_category[c])}")
+            self.print("Proposed bundle: " + " | ".join(msg))
 
-            binning = Binning.fromRelativeThresholds(rel_thrs, self.bkg_yields)
-            equivalent_binning = self.findEquivalent(binning)
+
+            # binning = Binning.fromRelativeThresholds(rel_thrs, self.bkg_yields)
+            equivalent_binning = self.findEquivalent(bundle)
             if equivalent_binning is None:
                 n = 0
-                open_request = self.findOpenRequest(binning)
+                open_request = self.findOpenRequest(bundle)
                 if open_request is None:
-                    self.print(f'Next binning to probe: {arrayToStr(binning.edges)}')
-                    self.input_queue.put(binning)
-                    self.addOpenRequest(binning)
+                    self.print(f'Next binning to probe: {arrayToStr(bundle.edges_by_category)}')
+                    self.input_queue.put((bundle, point))
+                    self.addOpenRequest(bundle)
                     utility_index = 0
                     open_request_sleep = 1
                 else:
-                    self.print(f'Open request for binning found: {arrayToStr(open_request.edges)}')
+                    self.print(f'Open request for binning found. Waiting for it to finish.')
                     time.sleep(open_request_sleep)
                     open_request_sleep = open_request_sleep * 2
                     utility_index = (utility_index + 1) % len(self.utilities)
             else:
-                self.print(f'Equivalent binning found: {arrayToStr(equivalent_binning.edges)}')
-                self.register(point, len(equivalent_binning.edges), equivalent_binning.exp_limit)
+                self.print(f'Equivalent binning found with exp_limit = {equivalent_binning.exp_limit}')
+                self.register(point, equivalent_binning.n_edges_total(), equivalent_binning.exp_limit)
                 n += 1
-                if n >= 5:
-                    self.tryBestBinningSplit()
+                # if n >= 5:
+                #     self.tryBestBinningSplit()
                 if n == n_eq_steps - 1:
                     self.print('Waiting for open requests to finish...')
                     self.waitOpenRequestsToFinish()
@@ -357,14 +372,15 @@ class MultiBayesianOptimization:
                         with open(result_file, 'r') as f:
                             result = json.load(f)
                         if result['input_datacard'] in self.input_datacards.values():
-                            binning = Binning.fromEntry(result)
+                            binning = MultiBinning.fromResult(result)
                             self.clearOpenRequest(binning)
                             if self.findEquivalent(binning) is None:
-                                point = binning.toPoint(self.max_n_bins)
+                                # point = binning.toPoint(self.max_n_bins)
                                 self.addNewBinning(binning)
                                 with open(self.log_output, 'a') as f:
                                     f.write(json.dumps(result) + '\n')
-                                self.register(point, len(binning.edges), binning.exp_limit)
+                                point = self.BundleToPoint(binning)
+                                self.register(point, binning.n_edges_total(), binning.exp_limit)
 
                         os.remove(task_file)
                         os.remove(result_file)
@@ -372,13 +388,16 @@ class MultiBayesianOptimization:
                     try:
                         binning = self.input_queue.get(True, 1)
                         if binning is None: return
-                        for card in self.input_datacards:
-                            task = {
-                                'input_datacard': card,
-                                'bin_edges': [ x for x in binning.edges ],
-                                'poi': self.poi,
-                                'other_datacards': self.other_datacards,
-                            }
+
+                        bundle, _point = binning
+                        # for card in self.input_datacards:
+                        # task = {
+                        #     'input_datacard': card,
+                        #     'bin_edges': [ x for x in binning.edges ],
+                        #     'poi': self.poi,
+                        #     'other_datacards': self.other_datacards,
+                        # }
+                        task = bundle.toTask(poi=self.poi, other_datacards=self.other_datacards)
                         with open(task_file_tmp, 'w') as f:
                             json.dump(task, f)
                         shutil.move(task_file_tmp, task_file)
@@ -408,15 +427,17 @@ class MultiBayesianOptimization:
 if __name__ == '__main__':
     import argparse
 
-    parser = argparse.ArgumentParser(description='Find optimal binning for multiple catgories that minimizes the expected limits.')
+    parser = argparse.ArgumentParser(description='Find optimal binning for multiple catgories that minimizes the combined expected limits.')
     parser.add_argument('--input', required=True, type=str, help="comma separated input datacards, e.g. datacard_cat1,datacard_cat2,..")
-    parser.add_argument('--shape-file', required=True, type=str, help="input root file with shapes, comma separated")
+    parser.add_argument('--shape-file', required=True, type=str, help="input root file with shapes, comma separated. keep the same order as input datacards.")
     parser.add_argument('--output', required=True, type=str, help="output directory")
     parser.add_argument('--workers-dir', required=True, type=str, help="output directory for workers results")
     parser.add_argument('--max_n_bins', required=True, type=int, help="maximum number of bins per category")
     parser.add_argument('--poi', required=False, type=str, default='r', help="parameter of interest")
     parser.add_argument('--params', required=False, type=str, default=None,
                         help="algorithm parameters in format param1=value1,param2=value2,...")
+    parser.add_argument('other_datacards',type=str, nargs='*',
+                        help="list of other datacards to be combined together with the current target")
     parser.add_argument('--verbosity', required=False, type=int, default=1, help="verbosity")
 
     args = parser.parse_args()
@@ -469,9 +490,15 @@ if __name__ == '__main__':
                                             input_datacards=input_datacards,
                                             poi=args.poi,
                                             bkg_yields=bkg_yields,
-                                            input_queue_size=2, random_seed=None)
+                                            input_queue_size=2,
+                                            random_seed=None,
+                                            other_datacards=[os.path.abspath(p) for p in args.other_datacards]
+                                            )
 
     multi_bo.maximize(20)
 
     print("Minimization finished.")
-    print("Best binning per category:\n")
+    if multi_bo.best_binning is not None:
+        print(f"Best combined exp_limit: {multi_bo.best_binning.exp_limit}")
+        for cat in range(multi_bo.best_binning.n_categories):
+            print(f"\tcat{cat} edges: {arrayToStr(multi_bo.best_binning.edges_by_category[cat])}")
