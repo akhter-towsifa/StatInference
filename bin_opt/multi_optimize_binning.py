@@ -129,7 +129,7 @@ class MultiBayesianOptimization:
 
         if os.path.isfile(self.log_output):
             with open(self.log_output, 'r') as f:
-                prev_binnins = json.loads('[' + ', '.join(f.readlines()) + ']')
+                prev_binnings = json.loads('[' + ', '.join(f.readlines()) + ']')
             for entry in prev_binnings:
                 binning = MultiBinning.fromResult(entry)
                 if self.findEquivalent(binning) is None:
@@ -159,7 +159,7 @@ class MultiBayesianOptimization:
     def pointToBundle(self, point):
 
         edges_by_cat = {}
-        for c in range(len(self.datacards)):
+        for c in range(len(self.input_datacards)):
             rel_thrs = np.zeros(self.max_n_bins, dtype=float)
             for k in range(self.max_n_bins):
                 rel_thrs[k] = float(point[f"rel_thr_cat{c}_{k}"])
@@ -237,14 +237,14 @@ class MultiBayesianOptimization:
             point = self.optimizer.suggest()
         else:
             point = self.suggestions.pop(0)
-            self.suggestions.remove(point)
-        self.optimize_lock.release()
+            #self.suggestions.remove(point)
+        self.optimizer_lock.release()
         return point
 
     def addSuggestion(self, edges):
         suggested_binning = Binning(np.array(edges))
-        rel_thrs = suggested_binning.getRelativeThresholds(self.max_n_bins, len(self.input_datacards))
-        binning = Binning.fromRelativeThresholds(rel_thrs, self.bkg_yields)
+        rel_thrs = suggested_binning.getRelativeThresholds(self.max_n_bins))
+        binning = Binning.fromRelativeThresholds(rel_thrs, self.bkg_yields_dict[0]) #this only looks t the first shape, fix this
         if self.findEquivalent(binning, False) is None:
             point = binning.toPoint(self.max_n_bins, len(self.input_datacards))
             self.suggestions.append(point)
@@ -261,23 +261,23 @@ class MultiBayesianOptimization:
     def tryBestBinningSplit(self):
         self.binning_lock.acquire()
         if not self.best_binning_split:
-            self.print('Splitting best binning...')
-            n_best = len(self.best_binning.edges)
+            self.print('Splitting best binning based on first category edges.')
+            n_best = len(self.best_binning.edges_by_category[0])
             self.optimizer_lock.acquire()
             if n_best - 2 < self.max_n_bins:
                 for k in range(n_best - 1):
                     edges = np.zeros(n_best + 1)
-                    edges[0:k+1] = self.best_binning.edges[0:k+1]
-                    edges[k+2:] = self.best_binning.edges[k+1:]
+                    edges[0:k+1] = self.best_binning.edges_by_category[0][0:k+1]
+                    edges[k+2:] = self.best_binning.edges_by_category[0][k+1:]
                     for delta_edge in [ 0.1, 0.5, 0.9 ]:
-                        edges[k+1] = self.best_binning.edges[k] \
-                                     + (self.best_binning.edges[k+1] - self.best_binning.edges[k]) * delta_edge
+                        edges[k+1] = self.best_binning.edges_by_category[0][k] \
+                                     + (self.best_binning.edges_by_category[0][k+1] - self.best_binning.edges_by_category[0][k]) * delta_edge
                         self.addSuggestion(edges)
             if n_best > 2:
                 for k in range(1, n_best):
                     edges = np.zeros(n_best - 1)
-                    edges[0:k] = self.best_binning.edges[0:k]
-                    edges[k:] = self.best_binning.edges[k+1:]
+                    edges[0:k] = self.best_binning.edges_by_category[0][0:k]
+                    edges[k:] = self.best_binning.edges_by_category[0][k+1:]
                     self.addSuggestion(edges)
             self.optimizer_lock.release()
             self.best_binning_split = True
@@ -371,7 +371,7 @@ class MultiBayesianOptimization:
                     if os.path.isfile(result_file):
                         with open(result_file, 'r') as f:
                             result = json.load(f)
-                        if result['input_datacard'] in self.input_datacards.values():
+                        if result['input_datacard'] in self.input_datacards:
                             binning = MultiBinning.fromResult(result)
                             self.clearOpenRequest(binning)
                             if self.findEquivalent(binning) is None:
@@ -379,7 +379,7 @@ class MultiBayesianOptimization:
                                 self.addNewBinning(binning)
                                 with open(self.log_output, 'a') as f:
                                     f.write(json.dumps(result) + '\n')
-                                point = self.BundleToPoint(binning)
+                                point = self.bundleToPoint(binning)
                                 self.register(point, binning.n_edges_total(), binning.exp_limit)
 
                         os.remove(task_file)
@@ -427,7 +427,7 @@ class MultiBayesianOptimization:
 if __name__ == '__main__':
     import argparse
 
-    parser = argparse.ArgumentParser(description='Find optimal binning for multiple catgories that minimizes the combined expected limits.')
+    parser = argparse.ArgumentParser(description='Find optimal binning for multiple categories that minimizes the combined expected limits.')
     parser.add_argument('--input', required=True, type=str, help="comma separated input datacards, e.g. datacard_cat1,datacard_cat2,..")
     parser.add_argument('--shape-file', required=True, type=str, help="input root file with shapes, comma separated. keep the same order as input datacards.")
     parser.add_argument('--output', required=True, type=str, help="output directory")
@@ -455,7 +455,7 @@ if __name__ == '__main__':
     for main_bkg in input_binning_opt_config_dict["background"]["main"]:
         ref_bkgs[f'{main_bkg}'] = re.compile(f'^{main_bkg}$')
     
-    nonbkgg_regex = re.compile('(data_obs|^ggHH.*|^qqHH.*|^DY_[0-2]b.*)')
+    nonbkg_regex = re.compile('(data_obs|^ggHH.*|^qqHH.*|^DY_[0-2]b.*)')
     ignore_unc_variations = re.compile('(CMS_bbtt_201[6-8]_DYSFunc[0-9]+|CMS_bbtt_.*_QCDshape)(Up|Down)')
 
     input_datacards = args.input.split(',')
@@ -487,9 +487,9 @@ if __name__ == '__main__':
                                             working_area=args.output,
                                             workers_dir=args.workers_dir,
                                             acq='ucb', kappa=2.57, xi=0.1,
-                                            input_datacards=input_datacards,
+                                            input_datacards_list=input_datacards,
                                             poi=args.poi,
-                                            bkg_yields=bkg_yields,
+                                            bkg_yields_dict=bkg_yields,
                                             input_queue_size=2,
                                             random_seed=None,
                                             other_datacards=[os.path.abspath(p) for p in args.other_datacards]

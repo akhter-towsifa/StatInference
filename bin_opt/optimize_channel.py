@@ -225,14 +225,20 @@ def optimize_channel(channel, output, era, categories, max_n_bins, params, binni
         best_binnings_file = os.path.join(output_dir, "best.json")
         with open(best_binnings_file, "w") as f:
             f.write('{{\n\t"{}": {{\n'.format(channel + "_" + era))
+
+            first_written = True
             for i, (category, _poi) in enumerate(categories):
                 if category not in best_binnings[channel + "_" + era]:
                     continue
+                if not first_written:
+                    f.write(",\n")
+                first_written = False
                 f.write('\t\t "{}": '.format(category))
                 json.dump(best_binnings[channel + "_" + era][category], f)
-                # trailing commas only between written entries
-                f.write(",\n")
-            f.write("\t}\n}\n")
+            if first_written:
+                f.write("\t}\n}\n")
+            else:
+                f.write("\n\t}\n}\n")
 
         final_binning_file = output_dir + ".json"
         shutil.copy(best_binnings_file, final_binning_file)
@@ -271,6 +277,8 @@ def optimize_channel(channel, output, era, categories, max_n_bins, params, binni
         if input_binning_opt_config_dict["input"]["multi_category_optimization"]:
             input_arg = ",".join([os.path.abspath(p) for p in datacards])
             shape_arg = ",".join([os.path.abspath(p) for p in shape_files])
+            if input_arg == "" or shape_arg == "":
+                raise RuntimeError("No datacards or shape files found in input directory")
             opt_cmd = f"python3 bin_opt/multi_optimize_binning.py --input {input_arg} --shape-file {shape_arg} --output {cat_dir} --workers-dir {workers_dir} --max_n_bins {max_n_bins} --poi {poi}"
 
         else:
