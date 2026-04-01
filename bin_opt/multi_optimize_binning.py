@@ -20,9 +20,13 @@ with open(input_binning_opt_config, "r") as f:
 
 if input_binning_opt_config_dict["input"]["num_original_bins"] == 1000:
     min_step = 0.001
+    min_step_digits = -int(math.log10(min_step))
+    step_int_scale = 10 ** min_step_digits
     max_value_int = input_binning_opt_config_dict["input"]["num_original_bins"]
 elif input_binning_opt_config_dict["input"]["num_original_bins"] == 5000:
     min_step = 0.0002
+    min_step_digits = -(math.log10(min_step))
+    step_int_scale = round(10 ** min_step_digits)
     max_value_int = input_binning_opt_config_dict["input"]["num_original_bins"]
 
 class MultiBinning:
@@ -31,6 +35,34 @@ class MultiBinning:
         self.exp_limit = None
         self.input_datacards = input_datacards
     
+    @staticmethod
+    def fromRelativeThresholds(rel_thrs, bkg_yields):
+        edges = [ max_value_int ]
+        prev_yield = -1
+        for rel_thr in rel_thrs:
+            edge_up = edges[-1]
+            edge_down = max(edge_up - int(round(rel_thr * step_int_scale)), 0)
+            all_ok = False
+            while edge_down >= 0:
+                all_ok, new_yield = bkg_yields.test(edge_down, edge_up, prev_yield)
+                if all_ok: break
+                edge_down -= 1
+            if all_ok:
+                edges.append(edge_down)
+                prev_yield = new_yield
+            if edge_down == 0: break
+        if len(edges) == 1:
+            edges.append(0)
+        edges.reverse()
+        edges = np.array(edges, dtype=float)
+        edges = edges / step_int_scale
+        if edges[-1] != 1:
+            edges[-1] = 1
+        if edges[0] != 0:
+            edges[0] = 0
+
+        return MultiBinning(edges_by_category=edges, input_datacards=None)
+
     @property
     def n_categories(self):
         return len(self.input_datacards)
@@ -121,7 +153,7 @@ class MultiBayesianOptimization:
         self.utilities = [
             bayes_opt.acquisition.UpperConfidenceBound(kappa=kappa),
             bayes_opt.acquisition.ExpectedImprovement(xi=xi),
-            bayes_opt.acquisition.ProportionalIntegralDerivative(xi=xi)
+            bayes_opt.acquisition.ProbabilityOfImprovement(xi=xi)
         ]
 
         os.makedirs(working_area, exist_ok=True)
@@ -164,8 +196,8 @@ class MultiBayesianOptimization:
             for k in range(self.max_n_bins):
                 rel_thrs[k] = float(point[f"rel_thr_cat{c}_{k}"])
 
-            binning = Binning.fromRelativeThresholds(rel_thrs, self.bkg_yields_dict[c])
-            edges_by_cat[c] = binning.edges
+            binning = MultiBinning.fromRelativeThresholds(rel_thrs, self.bkg_yields_dict[c])
+            edges_by_cat[c] = binning.edges_by_category
         return MultiBinning(edges_by_category=edges_by_cat, input_datacards=self.input_datacards)
 
     def bundleToPoint(self, bundle):
@@ -243,8 +275,8 @@ class MultiBayesianOptimization:
 
     def addSuggestion(self, edges):
         suggested_binning = Binning(np.array(edges))
-        rel_thrs = suggested_binning.getRelativeThresholds(self.max_n_bins))
-        binning = Binning.fromRelativeThresholds(rel_thrs, self.bkg_yields_dict[0]) #this only looks t the first shape, fix this
+        rel_thrs = suggested_binning.getRelativeThresholds(self.max_n_bins)
+        binning = MultiBinning.fromRelativeThresholds(rel_thrs, self.bkg_yields_dict[0]) #this only looks t the first shape, fix this
         if self.findEquivalent(binning, False) is None:
             point = binning.toPoint(self.max_n_bins, len(self.input_datacards))
             self.suggestions.append(point)
