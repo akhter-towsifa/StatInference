@@ -48,7 +48,7 @@ class Process:
     return True
 
   @staticmethod
-  def fromConfig(entry, model):
+  def fromConfig(entry, model, analysis_type):
     if type(entry) == str:
       return [ Process(entry, entry) ]
     if type(entry) != dict:
@@ -80,8 +80,8 @@ class Process:
     processes = []
     for param_entry in param_values:
       param_dict = parameterListToDict(parameters, param_entry)
-      name = applyParameters(base_name, param_dict)
-      hist_name = applyParameters(base_hist_name, param_dict)
+      name = applyParameters(base_name, param_dict, analysis_type)
+      hist_name = applyParameters(base_hist_name, param_dict, analysis_type)
       # processes.append(Process(name, hist_name, is_signal=is_signal, is_data=is_data, is_asimov_data=is_asimov_data,scale=scale,subprocesses=subprocesses,  allow_zero_integral=allow_zero_integral, allow_negative_bins_within_error=allow_negative_bins_within_error, max_n_sigma_for_negative_bins=max_n_sigma_for_negative_bins, allow_negative_integral=allow_negative_integral, params=param_dict))
       processes.append(Process(name, hist_name, is_signal=is_signal, is_data=is_data, is_asimov_data=is_asimov_data,scale=scale,subprocesses=subprocesses,  allow_zero_integral=allow_zero_integral, allow_negative_bins_within_error=allow_negative_bins_within_error, max_n_sigma_for_negative_bins=max_n_sigma_for_negative_bins, allow_negative_integral=allow_negative_integral, params=param_dict, channels=channels ))
     return processes

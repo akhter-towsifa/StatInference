@@ -35,6 +35,7 @@ class DatacardMaker:
       cfg[param] = value
 
     self.analysis = cfg["analysis"]
+    self.analysis_type = cfg["type"]
     self.eras = cfg["eras"]
     self.channels = cfg["channels"]
     self.categories = cfg["categories"]
@@ -63,7 +64,7 @@ class DatacardMaker:
         if param_values is not None:
           print(f"Overwriting signal parameters to {param_values}")
           process['param_values'] = param_values
-      new_processes = Process.fromConfig(process, self.model)
+      new_processes = Process.fromConfig(process, self.model, self.analysis_type)
       for process in new_processes:
         if process.name in self.processes:
           raise RuntimeError(f"Process name {process.name} already exists")

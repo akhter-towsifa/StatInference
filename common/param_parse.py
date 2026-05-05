@@ -11,10 +11,11 @@ def extractParameters(name_pattern):
     idx = end
   return parameters
 
-def applyParameters(pattern, parameters):
+def applyParameters(pattern, parameters, analysis_type):
   value = pattern
   for param_name, param_value in parameters.items():
-    value = value.replace("${" + param_name + "}", str(param_value))
+    value = signalProcessNamePattern(analysis_type, param_name, param_value)
+    # value = value.replace("${" + param_name + "}", str(param_value))
   return value
 
 def parameterListToDict(param_names, param_values):
@@ -26,3 +27,13 @@ def parameterListToDict(param_names, param_values):
   for n in range(len(param_names)):
     param_dict[param_names[n]] = param_values[n]
   return param_dict
+
+def signalProcessNamePattern(analysis_type, param_name, param_value):
+  if analysis_type == "nonresonant":
+    if type(param_value) == tuple:
+      for i in range(len(param_value)):
+        
+    return value = f"{param_value:.2f}".replace(".", "p")
+  else:
+    value = value.replace("${" + param_name + "}", str(param_value))
+    return value
