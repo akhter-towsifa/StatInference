@@ -1,0 +1,92 @@
+analysis: hh_bbtt_nonres
+type: nonresonant
+model:
+  parameters: [ ]
+  param_dependent_bkg: false
+  input_file_pattern: ${ERA}.root
+eras:
+  - Run3_2022EE
+channels:
+  - eTau
+  - muTau
+  - tauTau
+categories:
+  - res1b
+  - res2b
+  - boosted
+signalFractionForRelevantBins: 0.2
+# All 14 signal benchmark points go into every per-bin datacard together (matching
+# the reference Hamburg Run3 cards), instead of one datacard per signal point.
+keep_all_signal_hypothesis_into_single_datacard: true
+processes:
+  - process: data_obs
+    is_data: true
+    is_asimov_data: true
+
+  # ggF HH non-resonant benchmark points (kl, kt, c2), from
+  # config/Run3_2022EE/processes.yaml:GluGlutoHHto2B2Tau.meta_setup
+  - process: GluGluToHHto2B2Tau_0p00_1p00_0p00
+    is_signal: true
+  - process: GluGluToHHto2B2Tau_1p00_1p00_0p00
+    is_signal: true
+  - process: GluGluToHHto2B2Tau_2p45_1p00_0p00
+    is_signal: true
+  - process: GluGluToHHto2B2Tau_5p00_1p00_0p00
+    is_signal: true
+
+  # VBF HH non-resonant EFT benchmark points (CV, C2V, C3), from
+  # config/Run3_2022EE/processes.yaml:VBFHHto2B2Tau.meta_setup
+  - process: VBFHHto2B2Tau_1_0_1
+    is_signal: true
+  - process: VBFHHto2B2Tau_1_1_1
+    is_signal: true
+  - process: VBFHHto2B2Tau_1p74_1p37_14p4
+    is_signal: true
+  - process: VBFHHto2B2Tau_2p12_3p87_m5p96
+    is_signal: true
+  - process: VBFHHto2B2Tau_m0p012_0p030_10p2
+    is_signal: true
+  - process: VBFHHto2B2Tau_m0p758_1p44_m19p3
+    is_signal: true
+  - process: VBFHHto2B2Tau_m0p962_0p959_m1p43
+    is_signal: true
+  - process: VBFHHto2B2Tau_m1p21_1p94_m0p94
+    is_signal: true
+  - process: VBFHHto2B2Tau_m1p60_2p72_m1p36
+    is_signal: true
+  - process: VBFHHto2B2Tau_m1p83_3p57_m3p39
+    is_signal: true
+
+  # Backgrounds. Each of these is already a single merged process at the
+  # config/Run3_2022EE/processes.yaml stitching level (no per-dataset splitting
+  # left to re-sum here), so no `subprocesses:` list is needed, unlike the Run2
+  # example config.
+  - process: TT
+  - process: DY
+  - process: ST
+  - process: VV
+  - process: VVV
+  - process: ttH
+  - process: WtoLNu
+  - process: VBFH
+  - process: ggH
+  - process: VH
+  - process: QCD
+    allow_zero_integral: True
+    allow_negative_integral: True
+    allow_negative_bins_within_error: True
+    max_n_sigma_for_negative_bins: 10
+
+# No systematic uncertainties yet -- central-weight shapes only. autoMCStats
+# below still applies the usual per-bin statistical treatment; that is not a
+# systematic uncertainty and is kept on by default.
+uncertainties: [ ]
+
+autolnNThr: 0.1
+asymlnNThr: 0.001
+ignorelnNThr: 0.001
+autoMCStats:
+  apply: true
+  threshold: 20
+  apply_to_signal: true
+  mode: 1
