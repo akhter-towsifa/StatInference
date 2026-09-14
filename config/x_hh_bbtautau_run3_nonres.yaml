@@ -1,4 +1,4 @@
-analysis: hh_bbtt_nonres
+analysis: hh_bbtautau
 type: nonresonant
 model:
   parameters: [ ]
@@ -15,16 +15,12 @@ categories:
   - res2b
   - boosted
 signalFractionForRelevantBins: 0.2
-# All 14 signal benchmark points go into every per-bin datacard together (matching
-# the reference Hamburg Run3 cards), instead of one datacard per signal point.
 keep_all_signal_hypothesis_into_single_datacard: true
 processes:
   - process: data_obs
     is_data: true
     is_asimov_data: true
 
-  # ggF HH non-resonant benchmark points (kl, kt, c2), from
-  # config/Run3_2022EE/processes.yaml:GluGlutoHHto2B2Tau.meta_setup
   - process: GluGluToHHto2B2Tau_0p00_1p00_0p00
     is_signal: true
   - process: GluGluToHHto2B2Tau_1p00_1p00_0p00
@@ -34,8 +30,6 @@ processes:
   - process: GluGluToHHto2B2Tau_5p00_1p00_0p00
     is_signal: true
 
-  # VBF HH non-resonant EFT benchmark points (CV, C2V, C3), from
-  # config/Run3_2022EE/processes.yaml:VBFHHto2B2Tau.meta_setup
   - process: VBFHHto2B2Tau_1_0_1
     is_signal: true
   - process: VBFHHto2B2Tau_1_1_1
@@ -57,10 +51,7 @@ processes:
   - process: VBFHHto2B2Tau_m1p83_3p57_m3p39
     is_signal: true
 
-  # Backgrounds. Each of these is already a single merged process at the
-  # config/Run3_2022EE/processes.yaml stitching level (no per-dataset splitting
-  # left to re-sum here), so no `subprocesses:` list is needed, unlike the Run2
-  # example config.
+  # Backgrounds
   - process: TT
   - process: DY
   - process: ST
