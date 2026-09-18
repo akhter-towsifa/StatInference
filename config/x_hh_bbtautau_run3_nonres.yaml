@@ -21,34 +21,57 @@ processes:
     is_data: true
     is_asimov_data: true
 
+  # kl=0 isn't in hh_model_NNLOFix_13p6:model_default's recognized ggF sample
+  # list at all (only kl=1,2.45,5 @ kt=1 are), so it keeps our own hist name
+  # and rides along as an unscaled "additional signal" (needs
+  # --CombineDatacards-keep-additional-signals all on `law run UpperLimits`).
   - process: GluGluToHHto2B2Tau_0p00_1p00_0p00
     is_signal: true
-  - process: GluGluToHHto2B2Tau_1p00_1p00_0p00
+  - process: ggHH_kl_1_kt_1_hbbhtt
+    hist_name: GluGluToHHto2B2Tau_1p00_1p00_0p00
     is_signal: true
-  - process: GluGluToHHto2B2Tau_2p45_1p00_0p00
+  - process: ggHH_kl_2p45_kt_1_hbbhtt
+    hist_name: GluGluToHHto2B2Tau_2p45_1p00_0p00
     is_signal: true
-  - process: GluGluToHHto2B2Tau_5p00_1p00_0p00
+  - process: ggHH_kl_5_kt_1_hbbhtt
+    hist_name: GluGluToHHto2B2Tau_5p00_1p00_0p00
     is_signal: true
 
-  - process: VBFHHto2B2Tau_1_0_1
+  # VBF: hh_model_NNLOFix_13p6:model_default recognizes 6 of our 10 EFT
+  # benchmark points by exact name -- renamed to match below (hist_name keeps
+  # pointing at our real shape histogram). The 4 unmatched points
+  # (1p74_1p37_14p4, m0p758_1p44_m19p3, m0p962_0p959_m1p43, m1p60_2p72_m1p36)
+  # will be handled as additional signals.
+  # NOTE: the model's 5th point is CV=-2.12 (m2p12); our physically
+  # correct benchmark has CV=+2.12 (2p12) -- this is a sign bug on the
+  # inference side. Renamed to the model's (wrong-sign) label as a temporary
+  # measure to get it recognized/scaled -- revisit once the right hh_model is
+  # settled.
+  - process: qqHH_CV_1_C2V_0_kl_1_hbbhtt
+    hist_name: VBFHHto2B2Tau_1_0_1
     is_signal: true
-  - process: VBFHHto2B2Tau_1_1_1
+  - process: qqHH_CV_1_C2V_1_kl_1_hbbhtt
+    hist_name: VBFHHto2B2Tau_1_1_1
     is_signal: true
   - process: VBFHHto2B2Tau_1p74_1p37_14p4
     is_signal: true
-  - process: VBFHHto2B2Tau_2p12_3p87_m5p96
+  - process: qqHH_CV_m2p12_C2V_3p87_kl_m5p96_hbbhtt
+    hist_name: VBFHHto2B2Tau_2p12_3p87_m5p96
     is_signal: true
-  - process: VBFHHto2B2Tau_m0p012_0p030_10p2
+  - process: qqHH_CV_m0p012_C2V_0p030_kl_10p2_hbbhtt
+    hist_name: VBFHHto2B2Tau_m0p012_0p030_10p2
     is_signal: true
   - process: VBFHHto2B2Tau_m0p758_1p44_m19p3
     is_signal: true
   - process: VBFHHto2B2Tau_m0p962_0p959_m1p43
     is_signal: true
-  - process: VBFHHto2B2Tau_m1p21_1p94_m0p94
+  - process: qqHH_CV_m1p21_C2V_1p94_kl_m0p94_hbbhtt
+    hist_name: VBFHHto2B2Tau_m1p21_1p94_m0p94
     is_signal: true
   - process: VBFHHto2B2Tau_m1p60_2p72_m1p36
     is_signal: true
-  - process: VBFHHto2B2Tau_m1p83_3p57_m3p39
+  - process: qqHH_CV_m1p83_C2V_3p57_kl_m3p39_hbbhtt
+    hist_name: VBFHHto2B2Tau_m1p83_3p57_m3p39
     is_signal: true
 
   # Backgrounds
@@ -86,10 +109,24 @@ processes:
     allow_negative_bins_within_error: True
     max_n_sigma_for_negative_bins: 10
 
-# No systematic uncertainties yet -- central-weight shapes only. autoMCStats
-# below still applies the usual per-bin statistical treatment; that is not a
-# systematic uncertainty and is kept on by default.
-uncertainties: [ ]
+uncertainties:
+  # https://twiki.cern.ch/twiki/bin/viewauth/CMS/LumiRecommendationsRun3?extralog=-%20caching%20topic#Correlations_between_years_and_c
+  - name: lumi_1
+    type: lnN
+    eras:
+      - Run3_2022
+      - Run3_2022EE
+    value: 0.0138
+  - name: lumi_2
+    type: lnN
+    eras:
+      - Run3_2023
+    value: 0.0127
+  - name: lumi_3
+    type: lnN
+    eras:
+      - Run3_2024
+    value: 0.0144
 
 autolnNThr: 0.1
 asymlnNThr: 0.001
@@ -108,8 +145,23 @@ autoMCStats:
 # Run3_2022EE MC statistics; see StatInference/common/tools.py:
 # resolveNegativeBins for why allow_negative_bins_within_error can't fix that.
 #
+# Since we want to set an HH signal-strength limit, we use the signal class's DNN score/disciminant variable
+# python3 StatInference/dc_make/select_region_shapes.py \
+#   --input  <resolved path to ggF_DNN_pytorch_full_HH.root> \
+#   --output StatInference/output/nonres_run3_2022EE_dnnFull/$ERA.root \ #e.g. Hists_merged/Run3_2022EE/ggF_DNN_pytorch_full_HH/ggF_DNN_pytorch_full_HH.root
+#   --region OS_Iso
+#
 # cmsEnv python3 StatInference/dc_make/create_datacards.py \
 #   --input  StatInference/output/nonres_run3_2022EE_dnnFull \
 #   --output StatInference/output/nonres_run3_2022EE_dnnFull/cards \
-#   --config StatInference/config/x_hh_bbtautau_run3_nonres.yaml \
+#   --config config/Datacards/x_hh_bbtautau_run3_nonres.yaml \
 #   --hist-bins 0.0,0.5,1.0
+#
+# 
+# source env.sh
+# cd $FLAF_CMSSW_BASE/src && source /cvmfs/cms.cern.ch/cmsset_default.sh && eval $(scramv1 runtime -sh) && cd -
+# law run UpperLimits --version nonres_2022EE_dnnFull \
+#   --hh-model dhi.models.hh_model_NNLOFix_13p6:model_default \
+#   --datacards StatInference/output/nonres_run3_2022EE_dnnFull/cards/datacard_combined_signals.txt \
+#   --pois r --scan-parameters kl,1,1,1 \
+#   --CombineDatacards-keep-additional-signals all
