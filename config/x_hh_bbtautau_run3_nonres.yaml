@@ -55,13 +55,31 @@ processes:
   - process: TT
   - process: DY
   - process: ST
+    allow_zero_integral: True
+    allow_negative_bins_within_error: True
+    max_n_sigma_for_negative_bins: 1.2
   - process: VV
+    allow_zero_integral: True
+    allow_negative_bins_within_error: True
   - process: VVV
+    allow_zero_integral: True
+    allow_negative_bins_within_error: True
+    max_n_sigma_for_negative_bins: 1.01
   - process: ttH
+    allow_zero_integral: True
+    allow_negative_bins_within_error: True
   - process: WtoLNu
+    allow_zero_integral: True
+    allow_negative_bins_within_error: True
   - process: VBFH
+    allow_zero_integral: True
+    allow_negative_bins_within_error: True
   - process: ggH
+    allow_zero_integral: True
+    allow_negative_bins_within_error: True
   - process: VH
+    allow_zero_integral: True
+    allow_negative_bins_within_error: True
   - process: QCD
     allow_zero_integral: True
     allow_negative_integral: True
@@ -81,3 +99,17 @@ autoMCStats:
   threshold: 20
   apply_to_signal: true
   mode: 1
+
+# Command used to produce the datacards from this config (repeat once per DNN
+# variant, swapping --input/--output between nonres_run3_2022EE_dnnFull and
+# nonres_run3_2022EE_dnnKinFit). --hist-bins is 2 bins (0.0-0.5, 0.5-1.0), not
+# the full-resolution binning -- finer binning (10 or 100 uniform bins) hit
+# unresolvable negative bins in the signal-dominated tail with the current
+# Run3_2022EE MC statistics; see StatInference/common/tools.py:
+# resolveNegativeBins for why allow_negative_bins_within_error can't fix that.
+#
+# cmsEnv python3 StatInference/dc_make/create_datacards.py \
+#   --input  StatInference/output/nonres_run3_2022EE_dnnFull \
+#   --output StatInference/output/nonres_run3_2022EE_dnnFull/cards \
+#   --config StatInference/config/x_hh_bbtautau_run3_nonres.yaml \
+#   --hist-bins 0.0,0.5,1.0
