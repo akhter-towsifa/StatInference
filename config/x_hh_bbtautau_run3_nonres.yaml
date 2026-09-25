@@ -91,9 +91,10 @@ processes:
   - process: ttH
     allow_zero_integral: True
     allow_negative_bins_within_error: True
-  - process: WtoLNu
-    allow_zero_integral: True
-    allow_negative_bins_within_error: True
+  # WtoLNu dropped for now: not a major background, and its negative bins in
+  # the equal-yield-binned tail hit the unconditional relevant-bin veto
+  # (StatInference/common/tools.py:resolveNegativeBins) that no tolerance
+  # flag can resolve -- see StatInference/dc_make/diagnose_negative_bins.py.
   - process: VBFH
     allow_zero_integral: True
     allow_negative_bins_within_error: True
