@@ -96,3 +96,20 @@ E.g.
 ```sh
 rm -r output/binning_v2/tauTau_2018/workers
 ```
+
+## Unit tests
+
+`test/test_law_chain.py` checks the law tasks on the real FLAF and law classes over a scratch
+analysis (`test/statinference_fixture.py`): for each card, what it writes, which merged
+histograms it reads and the commands it runs. `test/test_card_eras.py` checks the card
+workflows over several eras, and `test/test_shape_plots.py` which histograms the shape plots
+of a card show, for categories read through `input_categories`.
+They need no ROOT, Combine or dhi. The `unit-tests` workflow runs them against a pinned FLAF
+commit; to run them locally, put a FLAF checkout at that commit (`ref:` in
+`.github/workflows/unit-tests.yaml`) next to this one and run from the directory holding both:
+
+```bash
+pip install pyyaml numpy luigi==3.8.1 law==0.1.21 pytest
+PYTHONPATH=$PWD python -m pytest -q StatInference/test/test_law_chain.py \
+    StatInference/test/test_card_eras.py StatInference/test/test_shape_plots.py
+```
