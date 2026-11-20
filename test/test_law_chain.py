@@ -47,6 +47,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import statinference_fixture as fx  # noqa: E402
 
+import law  # noqa: E402
 import luigi  # noqa: E402
 import yaml  # noqa: E402
 
@@ -58,6 +59,36 @@ create_datacards_module = importlib.import_module(
 )
 preprocess_module = importlib.import_module("StatInference.law.PreprocessShapesTask")
 limits_module = importlib.import_module("StatInference.law.ResonantLimitsTask")
+dhi_workflow_module = importlib.import_module("StatInference.law.dhi_workflow")
+plot_mixin_module = importlib.import_module("StatInference.law.DhiPlotMixin")
+
+
+def dhi_workflow_config():
+    """{dhi task: the `workflow` luigi's configuration gives it, or None}."""
+    config = luigi.configuration.get_config()
+    return {
+        task: (
+            config.get(task, "workflow")
+            if config.has_option(task, "workflow")
+            else None
+        )
+        for task in dhi_workflow_module.DHI_WORKFLOW_TASKS
+    }
+
+
+def keep_dhi_workflow_config(test):
+    """Put the dhi tasks' configured `workflow` back as it was after `test`."""
+    saved = dhi_workflow_config()
+    config = luigi.configuration.get_config()
+
+    def restore():
+        for task, value in saved.items():
+            if value is not None:
+                config.set(task, "workflow", value)
+            elif config.has_option(task, "workflow"):
+                config.remove_option(task, "workflow")
+
+    test.addCleanup(restore)
 
 
 def root_params():
@@ -312,6 +343,49 @@ class PlainChainTest(ChainTestCase):
                 os.path.join(data, "Datacards", card, card_era),
             )
 
+    def test_limits_pass_workflow_to_the_dhi_fits(self):
+        """--workflow reaches dhi's ResonantLimits, which MergeResonantLimits builds itself,
+        out of reach of req(): `--workflow local` (the integration CI) fits locally whatever
+        law.cfg says. Without --workflow nothing is set."""
+        for card_era, mass in every_card_mass():
+            fx.write(
+                self.store(
+                    "default",
+                    VERSION,
+                    "Datacards",
+                    self.card_name,
+                    card_era,
+                    f"MX_{mass}",
+                    f"datacard_{card_era}_{mass}.txt",
+                ),
+                card_era,
+            )
+        keep_dhi_workflow_config(self)
+        # without --workflow first: the configuration is shared by the subtests
+        for workflow, expected in ((None, None), ("local", "local")):
+            with self.subTest(workflow=workflow):
+                params = root_params()
+                if workflow is not None:
+                    params["workflow"] = workflow
+                limits = fx.si.ResonantLimitsTask(**params)
+                seen = []
+
+                def merge(version, datacards):
+                    # what dhi's ResonantLimits would read when the merge requires it
+                    seen.append(dhi_workflow_config()["ResonantLimits"])
+                    return ("merge", version, frozenset(datacards))
+
+                with mock.patch.object(
+                    limits_module, "subprocess", mock.Mock()
+                ), mock.patch.object(
+                    limits_module, "MergeResonantLimits", merge
+                ), mock.patch.object(
+                    type(limits), "cmssw_env", new_callable=mock.PropertyMock
+                ):
+                    next(limits.run())
+                self.assertTrue(seen)
+                self.assertEqual(set(seen), {expected})
+
     def test_limits_merge_each_card_and_combine_the_top_level_ones(self):
         """ResonantLimitsTask.run() up to its dynamic dependencies: every mass of a card
         mirrored from its own output into the one directory of the card, one merge per
@@ -502,23 +576,31 @@ class PreprocessChainTest(ChainTestCase):
     card_file = "config/Datacards/card_preprocess.yaml"
 
     def test_card_reads_its_preprocessed_shapes(self):
-        for (card_era, _), card in cards_of(limits_task()).items():
+        branches = [(card_era, mass) for card_era in fx.CARD_ERAS for mass in fx.MASSES]
+        for (card_era, mass), card in cards_of(limits_task()).items():
             preprocess = preprocess_of(card)
-            # every mass of a card reads the one preprocessing branch of that card
-            self.assertEqual(preprocess.branch, fx.CARD_ERAS.index(card_era))
+            # each mass of a card reads the preprocessing branch of that card and mass
+            self.assertEqual(preprocess.branch, branches.index((card_era, mass)))
             self.assertEqual(
-                preprocess.branch_data, {"card": self.card_name, "era": card_era}
+                preprocess.branch_data,
+                {"card": self.card_name, "era": card_era, "mass": mass},
             )
             self.assertEqual(
                 preprocess.output().abspath,
                 self.store(
-                    "default", VERSION, "Hists_preprocessed", self.card_name, card_era
+                    "default",
+                    VERSION,
+                    "Hists_preprocessed",
+                    self.card_name,
+                    card_era,
+                    f"MX_{mass}",
                 ),
             )
+            # only that mass's input crosses the network
             reqs = luigi.task.flatten(preprocess.requires())
             self.assertTrue(all(isinstance(r, fx.si.MergedHists) for r in reqs))
             self.assertEqual(
-                {r.output().abspath for r in reqs}, self.merged_hists(card_era)
+                {r.output().abspath for r in reqs}, self.merged_hists(card_era, mass)
             )
 
     def test_workflows_require_every_cards_inputs(self):
@@ -542,11 +624,11 @@ class PreprocessChainTest(ChainTestCase):
         self.write_merged_hists()
         ana = self.ana
         preprocess_of_card = {
-            card_era: preprocess_of(card)
-            for (card_era, _), card in cards_of(limits_task()).items()
+            (card_era, mass): preprocess_of(card)
+            for (card_era, mass), card in cards_of(limits_task()).items()
         }
-        for card_era, preprocess in preprocess_of_card.items():
-            with self.subTest(card=card_era):
+        for (card_era, mass), preprocess in preprocess_of_card.items():
+            with self.subTest(card=card_era, mass=mass):
                 (call,) = self.run_payload(preprocess, preprocess_module)
                 cmd, env, files = call
                 self.assertEqual(
@@ -569,7 +651,7 @@ class PreprocessChainTest(ChainTestCase):
                 )
                 self.assertEqual(self.arg(cmd, "--tag"), card_era)
                 self.assertEqual(env, {"CMSSW_ENV": "1"})
-                self.assertEqual(files, self.staged_layout(card_era))
+                self.assertEqual(files, self.staged_layout(card_era, mass))
                 self.assertEqual(
                     set(os.listdir(preprocess.output().abspath)),
                     {"payload_output", "card_config.yaml"},
@@ -585,6 +667,81 @@ class PreprocessChainTest(ChainTestCase):
                 cmd, _, files = maker
                 self.assertEqual(self.arg(cmd, "--eras"), card_era)
                 self.assertEqual(files, {os.path.join(card_era, "marker.root")})
+
+
+class DhiWorkflowTest(unittest.TestCase):
+    """--workflow reaches the dhi fits (dhi_workflow), which req() does not reach."""
+
+    def setUp(self):
+        keep_dhi_workflow_config(self)
+
+    def test_not_given_sets_nothing(self):
+        before = dhi_workflow_config()
+        for workflow in (None, "", law.NO_STR):
+            with self.subTest(workflow=workflow):
+                dhi_workflow_module.set_dhi_workflow(workflow)
+                self.assertEqual(dhi_workflow_config(), before)
+                self.assertEqual(dhi_workflow_module.dhi_workflow_args(workflow), [])
+
+    def test_given_reaches_every_dhi_fit(self):
+        dhi_workflow_module.set_dhi_workflow("htcondor")
+        self.assertEqual(
+            dhi_workflow_config(),
+            {"ResonantLimits": "htcondor", "PullsAndImpacts": "htcondor"},
+        )
+        self.assertEqual(
+            dhi_workflow_module.dhi_workflow_args("local"),
+            [
+                "--ResonantLimits-workflow",
+                "local",
+                "--PullsAndImpacts-workflow",
+                "local",
+            ],
+        )
+
+    def test_a_task_of_that_name_reads_it(self):
+        """luigi gives the configured value to a task named like the dhi fit, which is how
+        dhi's ResonantLimits picks it up (law.cfg's [luigi_ResonantLimits] works the same
+        way)."""
+
+        class ResonantLimits(luigi.Task):
+            workflow = luigi.Parameter(default="the default")
+
+        self.assertEqual(ResonantLimits().workflow, "the default")
+        dhi_workflow_module.set_dhi_workflow("local")
+        self.assertEqual(ResonantLimits().workflow, "local")
+
+    def test_the_plot_subprocess_gets_it(self):
+        """The dhi plot tasks run in a `law run` subprocess, which sees neither this
+        process's command line nor its configuration: the flags go on its command line,
+        before the entry's own dhi_args so those can still override them."""
+
+        class Plot:
+            pass
+
+        def command(workflow, extra=()):
+            task = mock.Mock(workflow=workflow, redraw=False)
+            return plot_mixin_module.DhiPlotMixin.plot_command(
+                task, Plot, {"version": "v"}, extra_args=extra
+            )
+
+        self.assertEqual(command(law.NO_STR), ["law", "run", "Plot", "--version", "v"])
+        self.assertEqual(
+            command("htcondor", ["--PullsAndImpacts-workflow", "local"]),
+            [
+                "law",
+                "run",
+                "Plot",
+                "--version",
+                "v",
+                "--ResonantLimits-workflow",
+                "htcondor",
+                "--PullsAndImpacts-workflow",
+                "htcondor",
+                "--PullsAndImpacts-workflow",
+                "local",
+            ],
+        )
 
 
 class StageMassDirTest(unittest.TestCase):
