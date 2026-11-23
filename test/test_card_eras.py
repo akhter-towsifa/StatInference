@@ -79,11 +79,12 @@ class CardTestCase(unittest.TestCase):
         return os.path.join(self.tmp, "data", VERSION, *path)
 
 
-def card_masses(masses=fx.MASSES):
-    """The branch map of the card workflow: every (card era, mass), card by card."""
+def card_masses(masses=fx.MASSES, card="card"):
+    """The branch map of the card workflow: every (card era, mass), era by era, of the
+    one card `card` (a plain card goes by its file name)."""
     return dict(
         enumerate(
-            {"era": card_era, "mass": mass}
+            {"card": card, "era": card_era, "mass": mass}
             for card_era in fx.CARD_ERAS
             for mass in masses
         )
@@ -140,9 +141,9 @@ class RestrictedMasses(CardTestCase):
         already exist, so that nothing below is asked to build the card map."""
         eras = (fx.ERA_A, fx.ERA_B)
         for name in (
-            "datacards/combined/combined_300.txt",
-            "ResonantLimitsTask/combined/limits.npz",
-            "ResonantLimitsTask/combined/era_limits/limits_Run3_2022.npz",
+            "datacards/card/combined/combined_300.txt",
+            "ResonantLimitsTask/card/combined/limits.npz",
+            "ResonantLimitsTask/card/combined/era_limits/limits_Run3_2022.npz",
         ):
             fx.write(self.data(*name.replace("datacards", "Datacards").split("/")), "")
         for cls in (
@@ -226,12 +227,11 @@ class CardsPairAndCarryEveryEra(CardTestCase):
         for card in cards.values():
             (preprocess,) = card.requires()
             self.assertIsInstance(preprocess, fx.si.PreprocessShapesTask)
-            self.assertEqual(
-                preprocess.branch, fx.CARD_ERAS.index(card.branch_data["era"])
-            )
-            self.assertEqual(preprocess.branch_data, card.branch_data["era"])
+            # one preprocessing branch per card, era and mass: the datacard branch's own
+            self.assertEqual(preprocess.branch, card.branch)
+            self.assertEqual(preprocess.branch_data, card.branch_data)
             outputs.add(preprocess.output().abspath)
-        self.assertEqual(len(outputs), len(fx.CARD_ERAS))
+        self.assertEqual(len(outputs), len(fx.CARD_ERAS) * len(fx.MASSES))
 
     def test_the_workflow_requires_the_preprocess_workflow(self):
         reqs = self.task(fx.si.CreateDatacardsTask).workflow_requires()
@@ -250,7 +250,7 @@ class CardsPairAndCarryEveryEra(CardTestCase):
         for task in preprocess.values():
             for req in luigi.task.flatten(task.requires()):
                 self.assertEqual(req.era, fx.ERAS)
-                self.assertIn(req.hist_era, fx.SUB_ERAS[task.branch_data])
+                self.assertIn(req.hist_era, fx.SUB_ERAS[task.branch_data["era"]])
                 self.assertIn(f"/Hists_merged/{req.hist_era}/", req.output().abspath)
 
 
@@ -260,11 +260,11 @@ class SelectedCards(CardTestCase):
     def test_a_selection_reaches_the_preprocessing(self):
         branches = branches_of(fx.CARD_ERAS[1])
         workflow = self.task(fx.si.CreateDatacardsTask, branches=branches)
-        self.assertEqual(
-            workflow.get_branch_map(), {b: card_masses()[b] for b in branches}
-        )
+        cards = card_masses(card="card_preprocess")
+        self.assertEqual(workflow.get_branch_map(), {b: cards[b] for b in branches})
         preprocess = workflow.workflow_requires()["PreprocessShapes"]
-        self.assertEqual(preprocess.get_branch_map(), {1: fx.CARD_ERAS[1]})
+        # the same branches: one preprocessing branch per card, era and mass
+        self.assertEqual(preprocess.get_branch_map(), {b: cards[b] for b in branches})
         reqs = luigi.task.flatten(preprocess.workflow_requires())
         self.assertEqual({r.hist_era for r in reqs}, set(fx.SUB_ERAS[fx.CARD_ERAS[1]]))
 
@@ -296,6 +296,7 @@ class LimitsOverTheCards(CardTestCase):
                         "default",
                         VERSION,
                         "Datacards",
+                        "card",
                         card_era,
                         f"MX_{mass}",
                     )

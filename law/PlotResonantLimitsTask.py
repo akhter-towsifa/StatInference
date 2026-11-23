@@ -16,11 +16,11 @@ from dhi.tasks.resonant import (
 )
 
 from .DhiPlotMixin import DhiPlotMixin
-from .StatInferenceTask import StatInferenceTask
+from .StatInferenceTask import CardTask
 from .ResonantLimitsTask import ResonantLimitsTask
 
 
-class PlotResonantLimitsTask(DhiPlotMixin, StatInferenceTask):
+class PlotResonantLimitsTask(DhiPlotMixin, CardTask):
     """The limit plots, declared in the datacard configuration.
 
     Each entry of the config's ``limit_plots`` block becomes one dhi
@@ -36,26 +36,34 @@ class PlotResonantLimitsTask(DhiPlotMixin, StatInferenceTask):
     cannot show. External limits and luminosity projections are separate curves rather than
     datacards, so they appear only on the overlay.
 
-    The finished plots are copied to fs_default alongside the rest of the chain's
+    The finished plots are copied to fs_StatInference alongside the rest of the chain's
     products; see DhiPlotMixin for how a dhi plot task is run and its output collected.
     """
 
     # Not a workflow itself. The parameter exists so that --workflow reaches the tasks
-    # below that are -- law's req() only forwards parameters both tasks declare -- and
+    # below that are -- law's req() only forwards parameters both tasks declare; the dhi
+    # fits get it through DhiPlotMixin.plot_command (dhi_workflow) -- and
     # NO_STR leaves each of those at its own default.
     workflow = luigi.Parameter(default=law.parameter.NO_STR)
 
     check_card_eras = True
 
     def requires(self):
+        if self.all_cards:
+            return self.card_tasks()
         # ResonantLimitsTask is what mirrors the cards to datacards_dir(), which is what
         # the globs below resolve against -- the plots cannot be built before it has run.
         return [ResonantLimitsTask.req(self)]
 
     def output(self):
-        # fs_default, like CreateDatacardsTask. Holds one
+        # fs_StatInference, like CreateDatacardsTask. Holds one
         # <era>/ sub-directory of plots plus plots.json naming them.
-        return self.output_dir_target(self.version, "LimitPlots")
+        if self.all_cards:
+            return {card: task.output() for card, task in self.card_tasks().items()}
+        return self.output_dir_target(self.version, "LimitPlots", self.this_card)
+
+    def card_has_work(self, card):
+        return bool(self.get_config_data(card).get("limit_plots"))
 
     def _resolve_config_path(self, path):
         return path if os.path.isabs(path) else os.path.join(self.ana_path(), path)
@@ -325,6 +333,9 @@ class PlotResonantLimitsTask(DhiPlotMixin, StatInferenceTask):
         return out_path
 
     def run(self):
+        if self.all_cards:
+            # every card's plots are its requirements; nothing is left to do here
+            return
         entries = self.get_config_data().get("limit_plots", [])
         if not entries:
             raise RuntimeError(
