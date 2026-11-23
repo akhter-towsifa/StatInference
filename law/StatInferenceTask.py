@@ -198,8 +198,37 @@ class StatInferenceTask(Task):
             era,
         )
 
+<<<<<<< Updated upstream
     def preprocess_config(self, card=None):
         """The card's `preprocess:` block, or None.
+=======
+    def stage_datacards(self, era, remote_target):
+        """Mirror an era's datacards from fs_default to a stable local path, returned.
+
+        CreateDatacardsTask writes to fs_default, but the cards must be real local files
+        by the time combine sees them: MergeResonantLimits and CWS shell out to combine, and
+        PlotMultipleResonantLimits resolves --multi-datacards by globbing the filesystem
+        outside law entirely. A localize() scratch dir will not do -- ResonantLimitsTask.run()
+        yields, which suspends and re-enters it, so the scratch dir is gone before dhi reads
+        anything.
+
+        The mirror path is the one CreateDatacardsTask used to write to directly, so
+        existing --multi-datacards invocations keep working unchanged.
+        """
+        local_dir = self.datacards_dir(era)
+        local_target = law.LocalDirectoryTarget(local_dir)
+        # Re-staged on every run, including ResonantLimitsTask's re-entry after its
+        # yield. The copy is small (~30 MB) and unconditional refresh is what keeps the
+        # mirror from going stale when CreateDatacardsTask reruns within the same version.
+        if local_target.exists():
+            local_target.remove()
+        local_target.touch()
+        remote_target.copy_to_local(local_target)
+        return local_dir
+
+    def preprocess_config(self):
+        """The datacard configuration's `preprocess:` block, or None.
+>>>>>>> Stashed changes
 
         None means the chain reads the merged histograms as they are -- a card that needs
         no transformation declares nothing and PreprocessShapesTask has no branch for it.
