@@ -8,7 +8,6 @@ from FLAF.RunKit.run_tools import ps_call
 from FLAF.run_tools.law_customizations import era_csv
 
 from .StatInferenceTask import StatInferenceTask
-from .CreateDatacardsTask import CreateDatacardsTask
 
 
 class CWSTask(StatInferenceTask):
@@ -19,25 +18,19 @@ class CWSTask(StatInferenceTask):
     index of their own and run on the law CWS pins: they cannot be required from this law
     process, and are started as `cws run` in the environment FLAF's `cwsEnv` alias sets up.
 
-    The analysis config names no era and no path. Per card era this task exports
+    The analysis config names no era and no path. For each era of `--era` this task exports
 
     - FLAF_CWS_ERA: the era, which the config maps to its CWS campaign (`flaf.campaigns`);
     - FLAF_CWS_VERSION: `<era>_<version>`, the CWS version, so each era has its own store;
-    - FLAF_CWS_DATACARDS: the local mirror of `<fs_default>/<version>/Datacards/<era>`;
+    - FLAF_CWS_DATACARDS: the local mirror of `<fs_StatInference>/<version>/Datacards/<era>`;
 
     which the config reads back with ``${oc.env:...}``. Each entry of `--cws-task-config` (the
     entries under the config's `tasks:`, all of them by default) is one `cws run`, whose plots
-    CWS collects (`--output-dir`) into `<fs_default>/<version>/CWS/<era>/<entry>/`.
+    CWS collects (`--output-dir`) into `<fs_StatInference>/<version>/CWS/<era>/<entry>/`.
 
-    The cards come from CreateDatacardsTask when global.yaml's StatInference block names a
-    datacard config, and are then built first; otherwise they are taken as they are on
-    fs_default, and the eras are those of `--era`.
+    The datacards are inputs: they are read as they are, not built first. fs_StatInference
+    falls back to fs_default.
     """
-
-    # Not a workflow itself. The parameter exists so that --workflow reaches the tasks
-    # below that are -- law's req() only forwards parameters both tasks declare -- and
-    # NO_STR leaves each of those at its own default.
-    workflow = luigi.Parameter(default=law.parameter.NO_STR)
 
     cws_config = luigi.Parameter(
         default="",
@@ -70,10 +63,10 @@ class CWSTask(StatInferenceTask):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Fail before luigi schedules anything, like check_card_eras: a requested entry the
-        # config does not have, or an era it has no campaign for.
+        # Fail before luigi schedules anything: a requested entry the config does not
+        # have, or an era it has no campaign for.
         self.cws_entries()
-        for era in self.cws_eras():
+        for era in self.era:
             self.cws_campaign(era)
 
     # ---- configuration ---------------------------------------------------------------
@@ -123,29 +116,13 @@ class CWSTask(StatInferenceTask):
             )
         return str(campaigns[era])
 
-    def builds_datacards(self):
-        """Whether the cards are this analysis' CreateDatacardsTask products, built first."""
-        settings = self.common(
-            lambda setup: setup.global_params.get("StatInference") or {},
-            "StatInference",
-        )
-        return bool(settings.get("config"))
-
-    def cws_eras(self):
-        """The eras to run CWS on: the cards of the datacard config, else those of --era."""
-        if self.builds_datacards():
-            return self.card_eras()
-        return list(self.era)
-
     def cws_version(self, era):
         return f"{era}_{self.version}"
 
     # ---- law ---------------------------------------------------------------------------
 
-    def requires(self):
-        if self.builds_datacards():
-            return CreateDatacardsTask.req(self, branches=())
-        return []
+    def datacards_target(self, era):
+        return self.output_dir_target(self.version, "Datacards", era)
 
     def output(self):
         return {
@@ -153,8 +130,26 @@ class CWSTask(StatInferenceTask):
                 entry: self.output_dir_target(self.version, "CWS", era, entry)
                 for entry in self.cws_entries()
             }
-            for era in self.cws_eras()
+            for era in self.era
         }
+
+    def stage_cards(self, era):
+        """Mirror an era's datacards to a local directory, returned: combine needs real
+        local files. Refreshed on every run, so a rebuilt card is never read stale. Not
+        StatInferenceTask.datacards_dir(), which is laid out by StatInference card."""
+        source = self.datacards_target(era)
+        if not source.exists():
+            raise RuntimeError(
+                f"{self.get_task_family()}: no datacards for {era} at {source.path}"
+            )
+        local = law.LocalDirectoryTarget(
+            os.path.join(self.ana_data_path(), self.version, "CWS_datacards", era)
+        )
+        if local.exists():
+            local.remove()
+        local.touch()
+        source.copy_to_local(local)
+        return local.abspath
 
     def cws_env(self, era, datacards_dir):
         """The environment of FLAF's `cwsEnv` alias (CWS's law config, task index and pinned
@@ -166,16 +161,11 @@ class CWSTask(StatInferenceTask):
                 "CWS_BASE is not set: CWS is set up by env.sh when HH_CWS_PATH points at the "
                 "cws submodule"
             )
-        cws_software = env.get("CWS_SOFTWARE", os.path.join(cws_base, "data", "software"))
         env["LAW_HOME"] = os.path.join(cws_base, ".law")
         env["LAW_CONFIG_FILE"] = os.path.join(cws_base, "law.cfg")
         env["PYTHONPATH"] = ":".join(
             p
-            for p in (
-                os.path.join(cws_base, "modules", "law"),
-                os.path.join(cws_software, "site-packages"),
-                env.get("PYTHONPATH", ""),
-            )
+            for p in (os.path.join(cws_base, "modules", "law"), env.get("PYTHONPATH", ""))
             if p
         )
         env["PATH"] = os.path.join(cws_base, "modules", "law", "bin") + ":" + env["PATH"]
@@ -204,11 +194,8 @@ class CWSTask(StatInferenceTask):
 
     def run(self):
         outputs = self.output()
-        for era in self.cws_eras():
-            datacards_dir = self.stage_datacards(
-                era, self.output_dir_target(self.version, "Datacards", era)
-            )
-            env = self.cws_env(era, datacards_dir)
+        for era in self.era:
+            env = self.cws_env(era, self.stage_cards(era))
             for entry in self.cws_entries():
                 target = outputs[era][entry]
                 with target.localize("w") as local_output:

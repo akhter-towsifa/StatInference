@@ -96,7 +96,6 @@ class ResonantLimitsTask(CardTask):
             "datacards": law.LocalDirectoryTarget(self.datacards_dir("combined")),
         }
 
-<<<<<<< Updated upstream
     def stage_datacards(self, era, remote_targets):
         """Mirror an era's datacards from fs_StatInference to a stable local path, returned.
 
@@ -175,8 +174,6 @@ class ResonantLimitsTask(CardTask):
                     )
                 shutil.copy2(os.path.join(root, name), target)
 
-=======
->>>>>>> Stashed changes
     def run(self):
         if self.all_cards:
             # every card's limits are its requirements; nothing is left to do here
