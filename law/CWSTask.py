@@ -165,10 +165,15 @@ class CWSTask(StatInferenceTask):
         env["LAW_CONFIG_FILE"] = os.path.join(cws_base, "law.cfg")
         env["PYTHONPATH"] = ":".join(
             p
-            for p in (os.path.join(cws_base, "modules", "law"), env.get("PYTHONPATH", ""))
+            for p in (
+                os.path.join(cws_base, "modules", "law"),
+                env.get("PYTHONPATH", ""),
+            )
             if p
         )
-        env["PATH"] = os.path.join(cws_base, "modules", "law", "bin") + ":" + env["PATH"]
+        env["PATH"] = (
+            os.path.join(cws_base, "modules", "law", "bin") + ":" + env["PATH"]
+        )
         env["FLAF_CWS_ERA"] = era
         env["FLAF_CWS_VERSION"] = self.cws_version(era)
         env["FLAF_CWS_DATACARDS"] = datacards_dir
